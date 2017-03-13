@@ -1,0 +1,46 @@
+<h1><%= "Contacts: #{params[:contacts][:checkbox]}" %></h1>
+<% if params[:contacts][:checkbox] == "true" %>
+	<div>
+		<table>
+			<tr>
+				<th>Person Types</th>
+				<th>Titles</th>
+				<th>Suffixes</th>
+				<th>Phone Types</th>
+				<th>Fax Types</th>
+			</tr>
+			<tr>
+				<td><% $types.each do |type| %>
+					<span><%= type %></span>
+					<br />
+				<% end %></td>
+				<td><% $titles.each do |title| %>
+					<span><%= title %></span>
+					<br />
+				<% end %></td>
+				<td><% $suffixes.each do |suffix| %>
+					<span><%= suffix %></span>
+					<br />
+				<% end %></td>
+				<td><% $phonetypes.each do |phonetype| %>
+					<span><%= phonetype %></span>
+					<br />
+				<% end %></td>
+				<td><% $faxtypes.each do |faxtype| %>
+					<span><%= faxtype %></span>
+					<br />
+				<% end %></td>
+			</tr>
+		</table>
+	</div>
+<% end %>
+<% if params[:tasks][:checkbox] == 'true' %>
+	<div>
+		<span>Run the following SQL query on the destination application '<%= params[:dest_appname] %>' to move completed tasks from Notes to Completed Tasks</span>
+		<p>
+			UPDATE ContactAction<br />
+			SET ObjectType='Task'<br />
+			WHERE ObjectType='Note' AND ActionDescription LIKE '[Task]%';<br />
+		</p>
+	</div>
+<% end %>
