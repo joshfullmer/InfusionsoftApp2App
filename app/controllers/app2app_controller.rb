@@ -13,7 +13,6 @@ class App2appController < ApplicationController
   $faxtypes = ["none"]
 
   def start
-
   end
 
   def transfer
@@ -39,10 +38,6 @@ class App2appController < ApplicationController
     transfer_attachments(applicationcredentials) unless params[:attachments][:checkbox] == 'false'
     transfer_orders(applicationcredentials,params[:subscriptions] == 'true') unless params[:orders][:checkbox] == 'false'
   end
-
-
-
-
 
   #adds contacts from source app to destination app
   #does not move custom fields or custom field data
@@ -227,7 +222,6 @@ class App2appController < ApplicationController
     end
 
     p "Contacts Imported."
-
   end
 
   def transfer_companies(appdata)
@@ -318,7 +312,6 @@ class App2appController < ApplicationController
     end
 
     p "Companies Imported."
-
   end
 
   #creates tags in destination app
@@ -347,6 +340,10 @@ class App2appController < ApplicationController
     #gets tag assignments
     source_tag_assignments = get_table('ContactGroupAssign')
 
+    tags_on_contacts = []
+    get_table('Contact').each { |c| tags_on_contacts |= c['Groups'].split(",") unless c['Groups'].nil? }
+    source_tags.reject! { |t| tags_on_contacts.exclude? t['Id'].to_s}
+
 
     #DESTINATION APP
     #-----------------------------------------------------------------------------
@@ -361,26 +358,18 @@ class App2appController < ApplicationController
     #gets tags and tag categories that already exist in destination app
     p "=> Getting Dest App Data"
     dest_tag_categories = {}
-    get_table('ContactGroupCategory').each do |cat|
-      dest_tag_categories[cat['Id']] = cat['CategoryName']
-    end
+    get_table('ContactGroupCategory').each { |cat| dest_tag_categories[cat['Id']] = cat['CategoryName'] }
 
     dest_tags = {}
-    get_table('ContactGroup').each do |tag|
-      dest_tags[tag['Id']] = tag['GroupName']
-    end
+    get_table('ContactGroup').each { |tag| dest_tags[tag['Id']] = tag['GroupName'] }
 
+    #creates ID relationships for contacts and companies
     dest_contacts = {}
-    get_table('Contact',['Id',@@source_app_contact_id]).each do |contact|
-      dest_contacts[contact[@@source_app_contact_id].to_i] = contact['Id']
-    end
+    get_table('Contact',['Id',@@source_app_contact_id]).each { |contact| dest_contacts[contact[@@source_app_contact_id].to_i] = contact['Id'] }
 
     dest_companies = {}
-      unless params[:companies][:checkbox] == 'false'
-      get_table('Company',['Id',@@source_app_account_id]).each do |company|
-        dest_companies[company[@@source_app_account_id].to_i] = company['Id']
-      end
-    end
+    get_table('Company',['Id',@@source_app_account_id]).each { |company| dest_companies[company[@@source_app_account_id].to_i] = company['Id'] } unless params[:companies][:checkbox] == 'false'
+
 
     #CREATE TAGS AND CATEGORIES
     #__________________________
@@ -409,7 +398,6 @@ class App2appController < ApplicationController
     end
 
     p "Tags Imported."
-
   end
 
   def transfer_contact_actions(appdata,notescheck,taskscheck,appointmentscheck)
@@ -468,7 +456,6 @@ class App2appController < ApplicationController
     end
 
     p "Notes/Tasks/Appointments Imported."
-
   end
 
   def transfer_products(appdata)
@@ -555,7 +542,6 @@ class App2appController < ApplicationController
     end
 
     p "Products Imported."
-
   end
 
   def transfer_opportunities(appdata)
@@ -697,7 +683,6 @@ class App2appController < ApplicationController
     end
 
     p "Opportunities Imported."
-
   end
 
   def transfer_attachments(appdata)
