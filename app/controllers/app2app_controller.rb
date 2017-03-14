@@ -1,7 +1,7 @@
 class App2appController < ApplicationController
 
-  @@source_app_contact_id = "_SourceAppContactID"    #"_SourceAppContactID"
-  @@source_app_company_id = "_SourceAppCompanyID"
+  @@source_app_contact_id = "_SourceAppContactID0"    #"_SourceAppContactID"
+  @@source_app_company_id = "_SourceAppCompanyID0"
   @@source_app_account_id = "_SourceAppCompanyID"
 
   @@subscription_relationship = {}
@@ -132,7 +132,9 @@ class App2appController < ApplicationController
     #adds lead source categories to dest app, and sets the ID of the source app lead source category equal to the category created
     #only adds lead source category if it doesn't already exist in dest app
     category_relationship = {}
-    source_app_lead_source_categories.each { |cat| category_relationship[cat['Id']] = dest_app_lead_source_categories.key(cat['Name']) == nil ? Infusionsoft.data_add('LeadSourceCategory',cat) : dest_app_lead_source_categories.key(cat['Name']) }
+    source_app_lead_source_categories.each { |cat| 
+      category_relationship[cat['Id']] = dest_app_lead_source_categories.key(cat['Name']) == nil ? Infusionsoft.data_add('LeadSourceCategory',cat) : dest_app_lead_source_categories.key(cat['Name'])
+    }
 
     #create empty hash with default relationship of 0 to 0
     lead_source_relationship = {0=>0}
@@ -194,6 +196,10 @@ class App2appController < ApplicationController
     import_tag_cat_id = Infusionsoft.data_add('ContactGroupCategory',{'CategoryName' => 'Application Transfer'})
     import_tag_id = Infusionsoft.data_add('ContactGroup',{'GroupCategoryId' => import_tag_cat_id, 'GroupName' => "Data from #{appdata[:src_appname]}"})
 
+    #GET CONTACTS THAT HAVE ALREADY BEEN TRANSFERRED
+    #_______________________________________________
+    dest_contacts = get_table("Contact",[@@source_app_contact_id],{@@source_app_contact_id => "_%"}).map { |c| c[@@source_app_contact_id]}
+
     #ADD CONTACTS
     #____________
 
@@ -204,6 +210,7 @@ class App2appController < ApplicationController
     #swaps user ID to destination app user ID based on users_relationship matching
     dest_emails = []
     all_contacts.each do |contact|
+      next if dest_contacts.include? contact['Id'].to_s #skips importing contacts that have previously been transferred
       contact.keys.each { |k| contact[ rename_mapping[k] ] = contact.delete(k).to_s if rename_mapping[k] }
       contact.delete('AccountId')
       contact['LeadSourceId'] = lead_source_relationship[contact['LeadSourceId']]
@@ -243,15 +250,19 @@ class App2appController < ApplicationController
     company_fields = []
     company_fields = FIELDS['Company'].map(&:clone)
 
-    source_app_custom_fields.each do |customfield|
-      company_fields << ("_" + customfield['Name']) if customfield['FormId'] == -6
-    end
+    source_app_custom_fields.each { |cf| company_fields.push("_" + cf['Name']) if cf['FormId'] == -6 }
 
     #gets source companies with custom fields.
     source_companies = get_table('Company',company_fields)
 
     #gets source contacts with source companyID to match up
     source_contacts = get_table('Contact')
+
+    #skip importing custom fields where companies don't have any data
+    fields_with_data = []
+    source_companies.each { |c| fields_with_data |= c.keys }
+    custom_fields_to_import = fields_with_data.grep(/^_/)
+    source_app_custom_fields.reject! { |cf| custom_fields_to_import.exclude? '_' + cf['Name']}
 
     #DESTINATION APP
     #-----------------------------------------------------------------------------
@@ -265,45 +276,45 @@ class App2appController < ApplicationController
     #____________________
     #get tab id for first company custom field tab, then get header tab using that tab id
     p "=> Creating custom fields"
-    custom_field_tab_id = Infusionsoft.data_query('DataFormTab',1000,0,{'FormId' => -6},['Id'])[0]['Id']
-    custom_field_header_id = Infusionsoft.data_query('DataFormGroup',1000,0,{'TabId' => custom_field_tab_id},['Id'])[0]['Id']
 
     #create company custom fields if they don't exist, and store the rename mapping in a hash for use later
     rename_mapping = {}
-    source_app_custom_fields.each do |customfield|
-      if customfield['FormId'] == -6
-        field = create_custom_field(customfield['Label'],custom_field_header_id,'Company',DATATYPES[DATATYPE_IDS[customfield['DataType']]]['dataType'])
-        rename_mapping['_' + customfield['Name']] = field['Name']
-        Infusionsoft.data_update_custom_field(field['Id'],{ 'Values' => customfield['Values'] }) if DATATYPES[DATATYPE_IDS[customfield['DataType']]]['hasValues'] == 'yes'  && customfield['Values'] != nil
-      end
+    source_app_custom_fields.each do |cf|
+      next if cf['FormId'] == -6
+      field = create_custom_field(cf['Label'],0,'Company',DATATYPES[DATATYPE_IDS[cf['DataType']]]['dataType'],cf['Values'])
+      rename_mapping['_' + cf['Name']] = field['Name']
     end
 
     #RENAME COMPANY FIELDS TO MATCH CUSTOM FIELDS
     #____________________________________________
-    @@source_app_account_id = create_custom_field('Source App Company ID',custom_field_header_id,'Company','Text')['Name']
+    @@source_app_account_id = create_custom_field('Source App Company ID',0,'Company','Text')['Name']
     rename_mapping['Id'] = @@source_app_account_id
-    source_companies.each_with_index do |item, pos|
-      source_companies[pos].keys.each { |k| source_companies[pos][ rename_mapping[k] ] = source_companies[pos].delete(k).to_s if rename_mapping[k] }
-    end
+
+    #GET COMPANIES THAT HAVE ALREADY BEEN IMPORTED
+    #_____________________________________________
+    dest_companies = get_table("Company",[@@source_app_account_id],{@@source_app_account_id => "_%"}).map { |c| c[@@source_app_account_id]}
 
     #IMPORT COMPANIES
     #________________
     p "=> Importing Company records"
-    company_relationship = {}
+    company_relationship = {0=>0}
     source_companies.each do |comp|
+      next if dest_companies.include? comp['Id'].to_s #skips importing contacts that have previously been transferred
+      comp.keys.each { |k| comp[ rename_mapping[k] ] = comp.delete(k).to_s if rename_mapping[k] } #rename fields to match those in dest app
       company_relationship[comp['CompanyID']] = Infusionsoft.data_add('Company',comp) unless comp.nil?
     end
 
     #ASSIGN CONTACTS TO COMPANIES
     #____________________________
     p "=> Assigning Contacts to Companies"
-    contact_ids_relationship = {}
+    contact_ids_relationship = {0=>0}
     get_table('Contact',[@@source_app_contact_id,'Id']).each do |cont|
-      contact_ids_relationship[cont[@@source_app_contact_id].to_i] = cont['Id'] unless cont[@@source_app_contact_id] == nil || cont.nil?
+      contact_ids_relationship[cont[@@source_app_contact_id].to_i] = cont['Id'] unless cont[@@source_app_contact_id].nil? || cont.nil?
     end
 
     source_contacts.each do |cont|
-      Infusionsoft.data_update('Contact',contact_ids_relationship[cont['Id']],{'AccountId' => company_relationship[cont['AccountId'].to_i]}) unless cont['AccountId'] == 0 || cont['AccountId'] == cont['Id']
+      next if cont['AccountId'] == 0 || cont['AccountId'] == cont['Id'] || company_relationship[cont['AccountId']].nil?
+      Infusionsoft.data_update('Contact',contact_ids_relationship[cont['Id']],{'AccountId' => company_relationship[cont['AccountId'].to_i]})
     end
 
     p "Companies Imported."

@@ -37,7 +37,7 @@ def create_custom_field(fieldname,headerid=0,tablename='Contact',fieldtype='Text
     end
     field['Id'] = Infusionsoft.data_add_custom_field(tablename,fieldname,fieldtype,headerid)
     field['Name'] = '_' + Infusionsoft.data_query('DataFormField',1000,0,{ 'Label' => "#{fieldname}", 'FormId' => CUSTOM_FIELD_FORM_ID.key(tablename)},['Name'])[0]['Name']
-    Infusionsoft.data_update_custom_field(field['Id'],{ 'Values' => cf['Values'] }) if DATATYPES[DATATYPE_IDS[cf['DataType']]]['hasValues'] == 'yes' && !values
+    Infusionsoft.data_update_custom_field(field['Id'],{ 'Values' => values }) unless values.nil?
   else
     field['Id'] = existing_field.first['Id']
     field['Name'] = '_' + existing_field.first['Name']
