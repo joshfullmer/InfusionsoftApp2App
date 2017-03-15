@@ -219,7 +219,7 @@ class App2appController < ApplicationController
       contact.keys.each { |k| contact[ rename_mapping[k] ] = contact.delete(k).to_s if rename_mapping[k] }
       contact.delete('AccountId')
       contact['LeadSourceId'] = lead_source_relationship[contact['LeadSourceId']]
-      users_relationship[contact['OwnerID']].nil? ? contact['OwnerID'] = 0 : contact['OwnerID'] = users_relationship[contact['OwnerID']]
+      contact['OwnerID'] = users_relationship[contact['OwnerID']] || 0
       contact_id = Infusionsoft.contact_add(contact) unless contact[@@source_app_contact_id] == contact[@@source_app_company_id]
       Infusionsoft.contact_add_to_group(contact_id, import_tag_id) unless contact_id.nil?
       dest_emails |= [contact['Email']]
