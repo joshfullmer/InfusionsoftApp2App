@@ -129,7 +129,7 @@ class App2appController < ApplicationController
     #only adds lead source category if it doesn't already exist in dest app
     category_relationship = {}
     source_app_lead_source_categories.each { |cat| 
-      category_relationship[cat['Id']] = dest_app_lead_source_categories.key(cat['Name']) == nil ? Infusionsoft.data_add('LeadSourceCategory',cat) : dest_app_lead_source_categories.key(cat['Name'])
+      category_relationship[cat['Id']] = dest_app_lead_source_categories.key(cat['Name']) || Infusionsoft.data_add('LeadSourceCategory',cat)
     }
 
     #create empty hash with default relationship of 0 to 0
@@ -139,7 +139,7 @@ class App2appController < ApplicationController
       src['LeadSourceCategoryId'] = category_relationship[src['LeadSourceCategoryId']] unless src['LeadSourceCategoryId'] == 0
 
       #creates lead source if it doesn't exist by the same name
-      lead_source_relationship[src['Id']] = dest_app_lead_sources.key(src['Name']) == nil ? Infusionsoft.data_add('LeadSource',src) : dest_app_lead_sources.key(src['Name'])
+      lead_source_relationship[src['Id']] = dest_app_lead_sources.key(src['Name']) || Infusionsoft.data_add('LeadSource',src)
     end
 
     #FKID AND CONTACT CUSTOM FIELDS
@@ -156,7 +156,8 @@ class App2appController < ApplicationController
     rename_mapping = {}
 
     source_app_custom_fields.each do |cf|
-      next if cf.nil? || cf['DataType'] == 25 || cf['FormId'] != -1#checks if app has ANY custom fields; also skips any of type 25, which is unknown, or when it's not a contact custom field
+      #checks if app has ANY custom fields; also skips any of type 25, which is unknown, or when it's not a contact custom field
+      next if cf.nil? || cf['DataType'] == 25 || cf['FormId'] != -1
       field = create_custom_field(cf['Label'],0,'Contact',DATATYPES[DATATYPE_IDS[cf['DataType']]]['dataType'],cf['Values'])
       rename_mapping['_' + cf['Name']] = field['Name']
     end if customfieldscheck
@@ -191,7 +192,11 @@ class App2appController < ApplicationController
 
     #check if Category and Tag already exist
     existing_cat_id = Infusionsoft.data_query('ContactGroupCategory',1000,0,{'CategoryName' => 'Application Transfer'},['Id'])
-    existing_tag_id = Infusionsoft.data_query('ContactGroup',1000,0,{'GroupCategoryId' => existing_cat_id.first['Id'], 'GroupName' => "Data from #{appdata[:src_appname]}"},['Id']) unless existing_cat_id.empty?
+    existing_tag_id = Infusionsoft.data_query('ContactGroup',
+                                              1000,
+                                              0,
+                                              {'GroupCategoryId' => existing_cat_id.first['Id'], 'GroupName' => "Data from #{appdata[:src_appname]}"},
+                                              ['Id']) unless existing_cat_id.to_a.empty?
 
     import_tag_cat_id = existing_cat_id.to_a.empty? ? Infusionsoft.data_add('ContactGroupCategory',{'CategoryName' => 'Application Transfer'}) : existing_cat_id.first['Id']
     import_tag_id = existing_tag_id.to_a.empty? ? Infusionsoft.data_add('ContactGroup',{'GroupCategoryId' => import_tag_cat_id, 'GroupName' => "Data from #{appdata[:src_appname]}"}) : existing_tag_id.first['Id']
@@ -214,7 +219,7 @@ class App2appController < ApplicationController
       contact.keys.each { |k| contact[ rename_mapping[k] ] = contact.delete(k).to_s if rename_mapping[k] }
       contact.delete('AccountId')
       contact['LeadSourceId'] = lead_source_relationship[contact['LeadSourceId']]
-      users_relationship[contact['OwnerID']] == nil ? contact['OwnerID'] = 0 : contact['OwnerID'] = users_relationship[contact['OwnerID']]
+      users_relationship[contact['OwnerID']].nil? ? contact['OwnerID'] = 0 : contact['OwnerID'] = users_relationship[contact['OwnerID']]
       contact_id = Infusionsoft.contact_add(contact) unless contact[@@source_app_contact_id] == contact[@@source_app_company_id]
       Infusionsoft.contact_add_to_group(contact_id, import_tag_id) unless contact_id.nil?
       dest_emails |= [contact['Email']]
@@ -279,7 +284,7 @@ class App2appController < ApplicationController
     #create company custom fields if they don't exist, and store the rename mapping in a hash for use later
     rename_mapping = {}
     source_app_custom_fields.each do |cf|
-      next if cf['FormId'] == -6
+      next if cf['FormId'] != -6
       field = create_custom_field(cf['Label'],0,'Company',DATATYPES[DATATYPE_IDS[cf['DataType']]]['dataType'],cf['Values'])
       rename_mapping['_' + cf['Name']] = field['Name']
     end
@@ -382,14 +387,14 @@ class App2appController < ApplicationController
     puts "=> Creating Categories"
     category_relationship = {}
     source_tag_categories.each do |cat|
-      category_relationship[cat['Id']] = dest_tag_categories.key(cat['CategoryName']).nil? ? Infusionsoft.data_add('ContactGroupCategory',cat) : dest_tag_categories.key(cat['CategoryName'])
+      category_relationship[cat['Id']] = dest_tag_categories.key(cat['CategoryName']) || Infusionsoft.data_add('ContactGroupCategory',cat)
     end
 
     puts "=> Creating Tags"
     tag_relationship = {}
     source_tags.each do |tag|
       tag['GroupCategoryId'] = category_relationship[tag['GroupCategoryId']] unless tag['GroupCategoryId'] == 0
-      tag_relationship[tag['Id']] = dest_tags.key(tag['GroupName']) == nil ? Infusionsoft.data_add('ContactGroup',tag) : dest_tags.key(tag['GroupName'])
+      tag_relationship[tag['Id']] = dest_tags.key(tag['GroupName']) || Infusionsoft.data_add('ContactGroup',tag)
     end
 
     #ADD TAGS TO CONTACTS & COMPANIES
@@ -466,7 +471,7 @@ class App2appController < ApplicationController
       action.except!('OpportunityId')
       action[@@source_app_action_id] = action['Id'].to_s
       action['ContactId'] = contact_ids_relationship[action['ContactId']]
-      action['UserID'] = users_relationship[action['UserID']].nil? ? 0 : users_relationship[action['UserID']]
+      action['UserID'] = users_relationship[action['UserID']] || 0
       action['ActionDescription'].prepend("[Task] ") if action['ObjectType'] == 'Task' && !action['ActionDescription'].nil?
       Infusionsoft.data_add('ContactAction',action)
     end
@@ -489,6 +494,7 @@ class App2appController < ApplicationController
     #initializes source app
     initialize_infusionsoft(appdata[:src_appname], appdata[:src_apikey])
 
+    puts "=> Getting Source Data"
     #SOURCE APP DATA
     #_______________
     #get products, categories, and category assignments
@@ -506,56 +512,56 @@ class App2appController < ApplicationController
     #initializes destination app
     initialize_infusionsoft(appdata[:dest_appname], appdata[:dest_apikey])
 
+    puts "=> Getting Destination App Data"
     #DEST APP DATA
     #_____________
     #get destination app products and categories to compare against source data, and stores them in hashes
     dest_products = {}
-    get_table('Product').each do |prod|
-      dest_products[prod['Id']] = prod['ProductName']
-    end
+    get_table('Product').each { |prod| dest_products[prod['Id']] = prod['ProductName'] }
 
     dest_product_categories = {}
-    get_table('ProductCategory').each do |cat|
-      dest_product_categories[cat['Id']] = cat['CategoryDisplayName']
-    end
+    get_table('ProductCategory').each { |cat| dest_product_categories[cat['Id']] = cat['CategoryDisplayName'] }
 
     dest_subscription_plans = get_table('SubscriptionPlan')
 
     #CREATE SUBSCRIPTIONS, PRODUCTS, AND CATEGORIES
     #______________________________
     #create products and categories if they don't exist by name in destination app
+    puts "=> Importing Products"
     product_relationships = {}
     source_products.each do |prod|
-      product_relationships[prod['Id']] = dest_products.key(prod['ProductName']).nil? ? Infusionsoft.data_add('Product',prod) : dest_products.key(prod['ProductName'])
+      product_relationships[prod['Id']] = dest_products.key(prod['ProductName']) || Infusionsoft.data_add('Product',prod)
     end
-    puts product_relationships.to_s
 
+    puts "=> Importing Subscription Plans"
     source_subscription_plans.each do |sub|
-      puts "Src Sub ID: #{sub['Id']}"
       do_not_import = false
       dest_subscription_plans.each do |plan|
-        do_not_import = true if sub['PlanPrice'] == plan['PlanPrice'] && sub['NumberOfCycles'] == plan['NumberOfCycles'] && product_relationships[sub['ProductId']] == plan['ProductId']
+        do_not_import = sub['PlanPrice'] == plan['PlanPrice'] && sub['NumberOfCycles'] == plan['NumberOfCycles'] && product_relationships[sub['ProductId']] == plan['ProductId']
         @@subscription_relationship[sub['Id']] = plan['Id'] if do_not_import
+        break if do_not_import
       end
       sub['ProductId'] = product_relationships[sub['ProductId']]
-      do_not_import = true if sub['ProductId'].nil?
+      do_not_import ||= sub['ProductId'].nil?
       @@subscription_relationship[sub['Id']] = Infusionsoft.data_add('SubscriptionPlan',sub) unless do_not_import
-      puts "Sub ID #{sub['Id']} imported: #{do_not_import}"
     end
 
+    puts "=> Importing Product Categories"
     category_relationships = {}
     source_product_categories.each do |cat|
-      category_relationships[cat['Id']] = dest_product_categories.key(cat['CategoryDisplayName']).nil? ? Infusionsoft.data_add('ProductCategory',cat) : dest_product_categories.key(cat['CategoryDisplayName'])
+      category_relationships[cat['Id']] = dest_product_categories.key(cat['CategoryDisplayName']) || Infusionsoft.data_add('ProductCategory',cat)
     end
 
     #ATTACH PRODUCTS AND CATEGORIES
     #______________________________
     #add assignments to ProductCategoryAssign, matching Ids based on previously created relationship hashes
+    puts "=> Attaching Products to Categories"
     dest_category_assign = get_table('ProductCategoryAssign')
     source_category_assign.each do |assign|
       do_not_import = false
       dest_category_assign.each do |cat|
-        do_not_import = true if product_relationships[assign['ProductId']] == cat['ProductId'] && category_relationships[assign['ProductCategoryId']] == cat['ProductCategoryId']
+        do_not_import = product_relationships[assign['ProductId']] == cat['ProductId'] && category_relationships[assign['ProductCategoryId']] == cat['ProductCategoryId']
+        break if do_not_import
       end
       Infusionsoft.data_add('ProductCategoryAssign',{'ProductId' => product_relationships[assign['ProductId']], 'ProductCategoryId' => category_relationships[assign['ProductCategoryId']]}) unless do_not_import
     end

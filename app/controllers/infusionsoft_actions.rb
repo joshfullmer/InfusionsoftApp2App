@@ -19,7 +19,7 @@ def get_table(tablename,fields=[],criteria={})
     break if table_page.length < 1000
     page_index += 1
   end
-  puts "#{tablename} table returned #{table.length} records"
+  puts "=== #{tablename} table returned #{table.length} records"
   table
 end
 
