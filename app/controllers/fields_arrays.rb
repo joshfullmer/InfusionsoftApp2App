@@ -121,7 +121,7 @@ CUSTOM_FIELD_FORM_ID = {
   -1 => 'Contact',
   -3 => 'Referral Partner',
   -4 => 'Opportunity',
-  -5 => 'Task/Note/Apt',
+  -5 => 'ContactAction',
   -6 => 'Company',
   -9 => 'Order'
 }

@@ -19,7 +19,7 @@ def get_table(tablename,fields=[],criteria={})
     break if table_page.length < 1000
     page_index += 1
   end
-  p "#{tablename} table returned #{table.length} records"
+  puts "#{tablename} table returned #{table.length} records"
   table
 end
 
@@ -51,7 +51,7 @@ def create_user_relationship(source_app_users,dest_app_users)
   relationships = {0=>0}
   source_app_users.each do |src_user|
     dest_app_users.each do |dest_user|
-      relationships[src_user['Id']] = dest_user['Id'] if src_user['GlobalUserId'] == dest_user['GlobalUserId'] || src_user['Email'] == dest_user['Email']
+      relationships[src_user['Id']] = dest_user['Id'] if src_user['GlobalUserId'] == dest_user['GlobalUserId'] || src_user['Email'].downcase == dest_user['Email'].downcase
     end
   end
   relationships

@@ -3,6 +3,7 @@ class App2appController < ApplicationController
   @@source_app_contact_id = "_SourceAppContactID0"    #"_SourceAppContactID"
   @@source_app_company_id = "_SourceAppCompanyID0"
   @@source_app_account_id = "_SourceAppCompanyID"
+  @@source_app_action_id = "_SourceAppActionID"
 
   @@subscription_relationship = {}
 
@@ -44,16 +45,16 @@ class App2appController < ApplicationController
 
   def transfer_contacts(appdata,customfieldscheck)
 
-    p "Importing Contacts..."
+    puts "Importing Contacts..."
 
     #SOURCE APP
     #---------------------------------------
 
-    p "=> Initializing Source App"
+    puts "=> Initializing Source App"
     #initialize source app
     initialize_infusionsoft(appdata[:src_appname], appdata[:src_apikey])
 
-    p "=> Getting Source Custom Fields"
+    puts "=> Getting Source Custom Fields"
     #get list of contact custom fields
     #then store the list of names in an array to add to fields for lookup
     source_app_custom_fields = get_table('DataFormField')
@@ -61,7 +62,7 @@ class App2appController < ApplicationController
     contact_fields = FIELDS['Contact'].map(&:clone)
     source_app_custom_fields.each { |cf| contact_fields.push("_" + cf['Name']) if cf['FormId'] == -1 }
 
-    p "=> Getting Source Contacts"
+    puts "=> Getting Source Contacts"
     #Option 1
     #________
     #get all contacts from the source app
@@ -70,7 +71,7 @@ class App2appController < ApplicationController
     #Option 2
     #________
     #get contacts with specific criteria
-    #all_contacts = get_table('Contact',contact_fields,{Groups: 1269})
+    #all_contacts = get_table('Contact',contact_fields,{Id: 282589})
     #all_contacts += (get_table('Contact',contact_fields,{OwnerID: 118786}))
 
     #reduce list of custom fields to create by detecting which fields have data
@@ -80,20 +81,20 @@ class App2appController < ApplicationController
     source_app_custom_fields.reject! { |cf| custom_fields_to_import.exclude? '_' + cf['Name']}
 
 
-    p "=> Getting Source Opt Outs"
+    puts "=> Getting Source Opt Outs"
     #get list of opted out emails
     opted_out_emails = get_table('EmailAddStatus').select { |email| OPT_OUT_STATUSES.include? email['Type'] }
 
-    p "=> Getting Source Lead Sources"
+    puts "=> Getting Source Lead Sources"
     #get list of Lead Sources and Categories from source app
     source_app_lead_source_categories = get_table('LeadSourceCategory')
     source_app_lead_sources = get_table('LeadSource')
 
-    p "=> Getting Source Users"
+    puts "=> Getting Source Users"
     #get list of users for comparing username to source app
     source_app_users = get_table('User')
 
-    p "=> Getting Source App Settings"
+    puts "=> Getting Source App Settings"
     #gets lists of app settings for comparing to dest app, stored as arrays
     source_types = Infusionsoft.data_get_app_setting('Contact','optiontypes').split(',')
     source_titles = Infusionsoft.data_get_app_setting('Contact','optiontitles').split(',')
@@ -107,14 +108,14 @@ class App2appController < ApplicationController
 
     #INITIALIZATION
     #______________
-    p "=> Initializing Dest App"
+    puts "=> Initializing Dest App"
     #initialize destination app
     initialize_infusionsoft(appdata[:dest_appname], appdata[:dest_apikey])
 
     #LEAD SOURCE
     #___________
 
-    p "=> Importing Lead Sources..."
+    puts "=> Importing Lead Sources..."
 
     #creates Lead Sources and Categories if they don't exist
     #Adds all category names and lead source names to hashes to compare
@@ -144,7 +145,7 @@ class App2appController < ApplicationController
     #FKID AND CONTACT CUSTOM FIELDS
     #__________________
 
-    p "=> Importing Custom Fields..."
+    puts "=> Importing Custom Fields..."
 
     #creates Source App Contact and Company ID custom fields if they don't exist
     @@source_app_contact_id = create_custom_field('Source App Contact ID')['Name']
@@ -153,13 +154,13 @@ class App2appController < ApplicationController
     #create contact custom fields if the custom fields check is true
     #also maps the source app custom fields to any existing custom fields in the dest app
     rename_mapping = {}
-    if customfieldscheck
-      source_app_custom_fields.each do |cf|
-        next if cf.nil? || cf['DataType'] == 25 || cf['FormId'] != -1#checks if app has ANY custom fields; also skips any of type 25, which is unknown, or when it's not a contact custom field
-        field = create_custom_field(cf['Label'],0,'Contact',DATATYPES[DATATYPE_IDS[cf['DataType']]]['dataType'],cf['Values'])
-        rename_mapping['_' + cf['Name']] = field['Name']
-      end
-    end
+
+    source_app_custom_fields.each do |cf|
+      next if cf.nil? || cf['DataType'] == 25 || cf['FormId'] != -1#checks if app has ANY custom fields; also skips any of type 25, which is unknown, or when it's not a contact custom field
+      field = create_custom_field(cf['Label'],0,'Contact',DATATYPES[DATATYPE_IDS[cf['DataType']]]['dataType'],cf['Values'])
+      rename_mapping['_' + cf['Name']] = field['Name']
+    end if customfieldscheck
+
 
     #switches the 'Id' key to be 'Source App Contact ID'
     #switches the 'CompanyID' key to be 'Source App Company ID'
@@ -168,13 +169,13 @@ class App2appController < ApplicationController
 
     #USERS
     #_____
-    p "=> Creating User Relationship"
+    puts "=> Creating User Relationship"
     #Matches up users based on their 'GlobalUserId' which is the Infusionsoft ID
     users_relationship = create_user_relationship(source_app_users,get_table('User'))
 
     #APP SETTINGS
     #____________
-    p "=> Generating App Settings Differences"
+    puts "=> Generating App Settings Differences"
 
     #Get differene between source app settings and dest app settings
     $types = source_types - Infusionsoft.data_get_app_setting('Contact','optiontypes').split(',')
@@ -186,10 +187,14 @@ class App2appController < ApplicationController
     #CREATE IMPORT TAG
     #_________________
 
-    p "=> Creating Import Tag..."
+    puts "=> Creating Import Tag..."
 
-    import_tag_cat_id = Infusionsoft.data_add('ContactGroupCategory',{'CategoryName' => 'Application Transfer'})
-    import_tag_id = Infusionsoft.data_add('ContactGroup',{'GroupCategoryId' => import_tag_cat_id, 'GroupName' => "Data from #{appdata[:src_appname]}"})
+    #check if Category and Tag already exist
+    existing_cat_id = Infusionsoft.data_query('ContactGroupCategory',1000,0,{'CategoryName' => 'Application Transfer'},['Id'])
+    existing_tag_id = Infusionsoft.data_query('ContactGroup',1000,0,{'GroupCategoryId' => existing_cat_id.first['Id'], 'GroupName' => "Data from #{appdata[:src_appname]}"},['Id']) unless existing_cat_id.empty?
+
+    import_tag_cat_id = existing_cat_id.to_a.empty? ? Infusionsoft.data_add('ContactGroupCategory',{'CategoryName' => 'Application Transfer'}) : existing_cat_id.first['Id']
+    import_tag_id = existing_tag_id.to_a.empty? ? Infusionsoft.data_add('ContactGroup',{'GroupCategoryId' => import_tag_cat_id, 'GroupName' => "Data from #{appdata[:src_appname]}"}) : existing_tag_id.first['Id']
 
     #GET CONTACTS THAT HAVE ALREADY BEEN TRANSFERRED
     #_______________________________________________
@@ -198,7 +203,7 @@ class App2appController < ApplicationController
     #ADD CONTACTS
     #____________
 
-    p "=> Adding contacts..."
+    puts "=> Adding contacts..."
 
     #adds each contact in the list of contacts to destination app
     #swaps lead source IDs before import to dest app lead source ID
@@ -215,18 +220,18 @@ class App2appController < ApplicationController
       dest_emails |= [contact['Email']]
     end
 
-    p "=> Opting Out Emails"
+    puts "=> Opting Out Emails"
     #opt out all emails that were opted out in the source app
     opted_out_emails.each do |email|
       Infusionsoft.email_optout(email, 'Source App Opt Out') if dest_emails.include? email
     end
 
-    p "Contacts Imported."
+    puts "Contacts Imported."
   end
 
   def transfer_companies(appdata)
 
-    p "Importing Companies..."
+    puts "Importing Companies..."
 
     #SOURCE APP
     #-----------------------------------------------------------------------------
@@ -239,7 +244,7 @@ class App2appController < ApplicationController
     #SOURCE APP DATA
     #_______________
     #Gets source app companies and company custom fields
-    p "=> Getting Source Data"
+    puts "=> Getting Source Data"
     source_app_custom_fields = get_table('DataFormField')
     company_fields = []
     company_fields = FIELDS['Company'].map(&:clone)
@@ -269,7 +274,7 @@ class App2appController < ApplicationController
     #CREATE COMPANY CUSTOM FIELDS
     #____________________
     #get tab id for first company custom field tab, then get header tab using that tab id
-    p "=> Creating custom fields"
+    puts "=> Creating custom fields"
 
     #create company custom fields if they don't exist, and store the rename mapping in a hash for use later
     rename_mapping = {}
@@ -290,7 +295,7 @@ class App2appController < ApplicationController
 
     #IMPORT COMPANIES
     #________________
-    p "=> Importing Company records"
+    puts "=> Importing Company records"
     company_relationship = {0=>0}
     source_companies.each do |comp|
       next if dest_companies.include? comp['Id'].to_s #skips importing contacts that have previously been transferred
@@ -300,7 +305,7 @@ class App2appController < ApplicationController
 
     #ASSIGN CONTACTS TO COMPANIES
     #____________________________
-    p "=> Assigning Contacts to Companies"
+    puts "=> Assigning Contacts to Companies"
     contact_ids_relationship = {0=>0}
     get_table('Contact',[@@source_app_contact_id,'Id']).each do |cont|
       contact_ids_relationship[cont[@@source_app_contact_id].to_i] = cont['Id'] unless cont[@@source_app_contact_id].nil? || cont.nil?
@@ -311,7 +316,7 @@ class App2appController < ApplicationController
       Infusionsoft.data_update('Contact',contact_ids_relationship[cont['Id']],{'AccountId' => company_relationship[cont['AccountId'].to_i]})
     end
 
-    p "Companies Imported."
+    puts "Companies Imported."
   end
 
   #creates tags in destination app
@@ -319,7 +324,7 @@ class App2appController < ApplicationController
 
   def transfer_tags(appdata,companytagcheck)
 
-    p "Importing Tags..."
+    puts "Importing Tags..."
 
     #SOURCE APP
     #-----------------------------------------------------------------------------
@@ -327,13 +332,13 @@ class App2appController < ApplicationController
     #INITIALIZE INFUSIONSOFT
     #_______________________
     #initializes source app
-    p "=> Initializing"
+    puts "=> Initializing"
     initialize_infusionsoft(appdata[:src_appname], appdata[:src_apikey])
 
     #SOURCE APP DATA
     #_______________
     #Gets source app tags and tag categories
-    p "=> Getting Source App Data"
+    puts "=> Getting Source App Data"
     source_tag_categories = get_table('ContactGroupCategory')
     source_tags = get_table('ContactGroup')
 
@@ -356,7 +361,7 @@ class App2appController < ApplicationController
     #DEST APP DATA
     #_____________
     #gets tags and tag categories that already exist in destination app
-    p "=> Getting Dest App Data"
+    puts "=> Getting Dest App Data"
     dest_tag_categories = {}
     get_table('ContactGroupCategory').each { |cat| dest_tag_categories[cat['Id']] = cat['CategoryName'] }
 
@@ -374,13 +379,13 @@ class App2appController < ApplicationController
     #CREATE TAGS AND CATEGORIES
     #__________________________
     #Create Categories and tags if they don't already exist
-    p "=> Creating Categories"
+    puts "=> Creating Categories"
     category_relationship = {}
     source_tag_categories.each do |cat|
       category_relationship[cat['Id']] = dest_tag_categories.key(cat['CategoryName']).nil? ? Infusionsoft.data_add('ContactGroupCategory',cat) : dest_tag_categories.key(cat['CategoryName'])
     end
 
-    p "=> Creating Tags"
+    puts "=> Creating Tags"
     tag_relationship = {}
     source_tags.each do |tag|
       tag['GroupCategoryId'] = category_relationship[tag['GroupCategoryId']] unless tag['GroupCategoryId'] == 0
@@ -390,23 +395,24 @@ class App2appController < ApplicationController
     #ADD TAGS TO CONTACTS & COMPANIES
     #________________________________
     #adds tags to contacts using the ContactGroupAssign table from the source app
-    p "=> Applying Tags"
+    puts "=> Applying Tags"
     source_tag_assignments.each do |contact|
       next if dest_contacts[contact['ContactId']].nil? && dest_companies[contact['Contact.CompanyID']].nil?
       contact['GroupId'] = tag_relationship[contact['GroupId']]
       dest_contacts[contact['ContactId']].nil? ? Infusionsoft.contact_add_to_group(dest_companies[contact['Contact.CompanyID']], contact['GroupId']) : Infusionsoft.contact_add_to_group(dest_contacts[contact['ContactId']], contact['GroupId'])
     end
 
-    p "Tags Imported."
+    puts "Tags Imported."
   end
 
   def transfer_contact_actions(appdata,notescheck,taskscheck,appointmentscheck)
 
-    p "Importing Notes/Tasks/Appointments..."
+    puts "Importing Notes/Tasks/Appointments..."
 
     #SOURCE APP
     #-----------------------------------------------------------------------------
 
+    puts "=> Getting Source Data"
     #INITIALIZE INFUSIONSOFT
     #_______________________
     #initializes source app
@@ -426,17 +432,25 @@ class App2appController < ApplicationController
     #initializes destination app
     initialize_infusionsoft(appdata[:dest_appname], appdata[:dest_apikey])
 
+    puts "=> Getting Destination Data"
     #DEST APP DATA
     #_____________
     #get contact and source ids
     #get user relationship - Hash where key is dest ID and value is source ID
-    contact_ids = get_table('Contact',['Id',@@source_app_contact_id])
     contact_ids_relationship = {}
-    contact_ids.each do |id|
-      contact_ids_relationship[id[@@source_app_contact_id].to_i] = id['Id']
-    end
+    get_table('Contact',['Id',@@source_app_contact_id],{@@source_app_contact_id => "_%"}).each { |id| contact_ids_relationship[id[@@source_app_contact_id].to_i] = id['Id'] }
     users_relationship = create_user_relationship(source_app_users,get_table('User'))
 
+    puts "=> Creating Custom Field for FKID"
+    #CREATE CUSTOM FIELD FOR FKID
+    #____________________________
+    @@source_app_action_id = create_custom_field('Source App Action ID',0,'ContactAction','Text')['Name']
+
+    #GET ACTIONS THAT HAVE ALREADY BEEN TRANSFERRED
+    #_______________________________________________
+    dest_actions = get_table('ContactAction',[@@source_app_action_id],{@@source_app_action_id => "_%"}).map { |c| c[@@source_app_action_id]}
+
+    puts "=> Transferring Contact Actions"
     #TRANSFER TASKS NOTES APPTS
     #__________________________
     #checks for the parameter if each type should be transferred
@@ -447,20 +461,25 @@ class App2appController < ApplicationController
     }
     default_user_id = Infusionsoft.data_get_app_setting('Templates','defuserid')
     source_contact_actions.each do |action|
+      #skips the action if it doesn't have a contact, if it has already been transferred, or if it's not checked on the form
+      next if contact_ids_relationship[action['ContactId']].nil? || dest_actions.include?(action['Id'].to_s) || !transfer_check[action['ObjectType']]
       action.except!('OpportunityId')
-      next if contact_ids_relationship[action['ContactId']].nil?
+      action[@@source_app_action_id] = action['Id'].to_s
       action['ContactId'] = contact_ids_relationship[action['ContactId']]
-      action['UserID'] = users_relationship[action['UserID']].nil? == true ? 0 : users_relationship[action['UserID']]
-      action['ActionDescription'].prepend("[Task] ") if action['ObjectType'] == 'Task' && action['ActionDescription'].nil? == false
-      Infusionsoft.data_add('ContactAction',action) if transfer_check[action['ObjectType']]
+      action['UserID'] = users_relationship[action['UserID']].nil? ? 0 : users_relationship[action['UserID']]
+      action['ActionDescription'].prepend("[Task] ") if action['ObjectType'] == 'Task' && !action['ActionDescription'].nil?
+      Infusionsoft.data_add('ContactAction',action)
     end
 
-    p "Notes/Tasks/Appointments Imported."
+    puts "Notes/Tasks/Appointments Imported."
   end
+
+  #creates products in destination app
+  #only creates products that don't have an exact match, matching by product name
 
   def transfer_products(appdata)
 
-    p "Importing Products..."
+    puts "Importing Products..."
 
     #SOURCE APP
     #-----------------------------------------------------------------------------
@@ -509,10 +528,10 @@ class App2appController < ApplicationController
     source_products.each do |prod|
       product_relationships[prod['Id']] = dest_products.key(prod['ProductName']).nil? ? Infusionsoft.data_add('Product',prod) : dest_products.key(prod['ProductName'])
     end
-    p product_relationships.to_s
+    puts product_relationships.to_s
 
     source_subscription_plans.each do |sub|
-      p "Src Sub ID: #{sub['Id']}"
+      puts "Src Sub ID: #{sub['Id']}"
       do_not_import = false
       dest_subscription_plans.each do |plan|
         do_not_import = true if sub['PlanPrice'] == plan['PlanPrice'] && sub['NumberOfCycles'] == plan['NumberOfCycles'] && product_relationships[sub['ProductId']] == plan['ProductId']
@@ -521,7 +540,7 @@ class App2appController < ApplicationController
       sub['ProductId'] = product_relationships[sub['ProductId']]
       do_not_import = true if sub['ProductId'].nil?
       @@subscription_relationship[sub['Id']] = Infusionsoft.data_add('SubscriptionPlan',sub) unless do_not_import
-      p "Sub ID #{sub['Id']} imported: #{do_not_import}"
+      puts "Sub ID #{sub['Id']} imported: #{do_not_import}"
     end
 
     category_relationships = {}
@@ -541,12 +560,12 @@ class App2appController < ApplicationController
       Infusionsoft.data_add('ProductCategoryAssign',{'ProductId' => product_relationships[assign['ProductId']], 'ProductCategoryId' => category_relationships[assign['ProductCategoryId']]}) unless do_not_import
     end
 
-    p "Products Imported."
+    puts "Products Imported."
   end
 
   def transfer_opportunities(appdata)
 
-    p "Importing Opportunities..."
+    puts "Importing Opportunities..."
 
     #SOURCE APP
     #-----------------------------------------------------------------------------
@@ -603,7 +622,7 @@ class App2appController < ApplicationController
     dest_companies = {}
     get_table('Company',['Id',@@source_app_account_id]).each do |company|
       dest_companies[company['Id']] = company[@@source_app_account_id].to_i
-    end
+    end unless params[:companies][:checkbox] == 'false'
 
     dest_default_stage = Infusionsoft.data_get_app_setting('Opportunity','defaultstage')
 
@@ -682,11 +701,11 @@ class App2appController < ApplicationController
       Infusionsoft.data_add('ProductInterest',interest) unless interest['ObjType'] == 'Action' || interest['ProductId'].nil?
     end
 
-    p "Opportunities Imported."
+    puts "Opportunities Imported."
   end
 
   def transfer_attachments(appdata)
-    p "Importing attachments..."
+    puts "Importing attachments..."
 
     #SOURCE APP
     #-----------------------------------------------------------------------------
@@ -726,16 +745,16 @@ class App2appController < ApplicationController
       contact_id = contact[0]['Id']
 
       #upload file
-      p "File ID: #{file['Id']}"
-      p "Filename: #{file['FileName']}"
+      puts "File ID: #{file['Id']}"
+      puts "Filename: #{file['FileName']}"
       Infusionsoft.file_upload(contact_id,file['FileName'].downcase,file_data)
     end
 
-    p "Attachments Imported."
+    puts "Attachments Imported."
   end
 
   def transfer_orders(appdata,subscriptioncheck=false)
-    p "Importing orders..."
+    puts "Importing orders..."
 
     #INITIALIZE INFUSIONSOFT
     #_______________________
@@ -744,7 +763,7 @@ class App2appController < ApplicationController
 
     #GET SOURCE DATA
     #_______________
-    p "=> Getting Source Data..."
+    puts "=> Getting Source Data..."
 
     #get Job, Invoice, InvoiceItem, and InvoicePayment tables
     source_jobs = get_table('Job')
@@ -770,7 +789,7 @@ class App2appController < ApplicationController
 
     #GET DEST DATA
     #_____________
-    p "=> Getting Destination Data..."
+    puts "=> Getting Destination Data..."
 
     #get contact relationship
     contact_ids_relationship = {}
@@ -786,7 +805,7 @@ class App2appController < ApplicationController
 
     #CREATE BLANK ORDERS
     #___________________
-    p "=> Creating Blank Orders..."
+    puts "=> Creating Blank Orders..."
 
     #creates blank orders and stores relationship between the created Invoice and the historical invoice
     invoice_relationship = {}
@@ -797,7 +816,7 @@ class App2appController < ApplicationController
 
     #CREATE ORDER ITEMS
     #__________________
-    p "=> Creating Order Items..."
+    puts "=> Creating Order Items..."
 
     #create relationship between invoices and purchased products
     historical_invoice_product_relationship = {}
@@ -844,7 +863,7 @@ class App2appController < ApplicationController
 
     #CREATE ORDER PAYMENTS
     #_____________________
-    p "=> Creating Order Payments"
+    puts "=> Creating Order Payments"
 
     #creates relationship between InvoicePaymentID and PaymentID
     invoice_payment_relationship = {}
@@ -884,7 +903,7 @@ class App2appController < ApplicationController
 
     #CREATE ORDER PAYMENT PLANS
     #__________________________
-    p "=> Creating Order Payment Plans..."
+    puts "=> Creating Order Payment Plans..."
 
     #gets dest app settings for retries
     days_between_retry = Infusionsoft.data_get_app_setting('Order','defaultnumdaysbetween').to_i
@@ -932,6 +951,6 @@ class App2appController < ApplicationController
       Infusionsoft.invoice_add_payment_plan(invoice_id,false,0,0,days_between_retry,max_retry,initial_payment_amount,initial_payment_date,plan_start_date,number_of_payments,days_between_payments)
     end
 
-    p "Orders Imported."
+    puts "Orders Imported."
   end
 end
