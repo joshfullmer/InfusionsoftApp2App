@@ -724,10 +724,7 @@ class App2appController < ApplicationController
     source_file_table = get_table('FileBox')
 
     #gets a list of user IDs to ignore from the FileBox table, so we only import contact files and not user files
-    users = []
-    get_table('User').each do |user|
-      users << user['Id']
-    end
+    users = get_table('User').map { |user| user['Id'] }
 
     #TRANSFER FILES
     #______________
@@ -746,12 +743,13 @@ class App2appController < ApplicationController
       initialize_infusionsoft(appdata[:dest_appname], appdata[:dest_apikey])
       contact = Infusionsoft.data_query('Contact',1000,0,{@@source_app_contact_id => file['ContactId']},['Id'])
       next if contact == [] || file['FileName'].nil?
-      contact_id = contact[0]['Id']
+
+      contact_files = get_table("FileBox",['FileName'],{"ContactId" => contact.first['Id']}).map { |f| f['FileName']}
 
       #upload file
       puts "File ID: #{file['Id']}"
       puts "Filename: #{file['FileName']}"
-      Infusionsoft.file_upload(contact_id,file['FileName'].downcase,file_data)
+      Infusionsoft.file_upload(contact.first['Id'],file['FileName'].downcase,file_data) unless contact_files.include? file['FileName'].downcase
     end
 
     puts "Attachments Imported."
