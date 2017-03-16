@@ -4,6 +4,7 @@ class App2appController < ApplicationController
   @@source_app_company_id = "_SourceAppCompanyID0"
   @@source_app_account_id = "_SourceAppCompanyID"
   @@source_app_action_id = "_SourceAppActionID"
+  @@source_app_opportunity_id = "_SourceAppOpportunityID"
 
   @@subscription_relationship = {}
 
@@ -569,6 +570,9 @@ class App2appController < ApplicationController
     puts "Products Imported."
   end
 
+  #opportunity stages cannot be created by the API, so they will need to be replicated before the transfer
+  #if they are not replicated, the opportunities will be added to the New stage, or the default stage.
+
   def transfer_opportunities(appdata)
 
     puts "Importing Opportunities..."
@@ -588,18 +592,14 @@ class App2appController < ApplicationController
     opportunity_fields = []
     opportunity_fields = FIELDS['Lead'].map(&:clone)
 
-    source_app_custom_fields.each do |customfield|
-      opportunity_fields << ("_" + customfield['Name']) if customfield['FormId'] == -4
-    end
+    source_app_custom_fields.each { |cf| opportunity_fields.push("_" + cf['Name']) if cf['FormId'] == -4 }
 
     #gets source companies with custom fields.
     source_opportunities = get_table('Lead',opportunity_fields)
 
     #get source products, product interests, and interest bundles
     source_products = {}
-    get_table('Product').each do |product|
-      source_products[product['ProductName']] = product['Id']
-    end
+    get_table('Product').each { |product| source_products[product['ProductName']] = product['Id'] }
     source_interests = get_table('ProductInterest')
     source_bundles = get_table('ProductInterestBundle')
 
@@ -621,14 +621,10 @@ class App2appController < ApplicationController
     #_____________
     #get contacts and companies from source app
     dest_contacts = {}
-    get_table('Contact',['Id',@@source_app_contact_id]).each do |contact|
-      dest_contacts[contact['Id']] = contact[@@source_app_contact_id].to_i
-    end
+    get_table('Contact',['Id',@@source_app_contact_id]).each { |contact| dest_contacts[contact['Id']] = contact[@@source_app_contact_id].to_i }
 
     dest_companies = {}
-    get_table('Company',['Id',@@source_app_account_id]).each do |company|
-      dest_companies[company['Id']] = company[@@source_app_account_id].to_i
-    end unless params[:companies][:checkbox] == 'false'
+    get_table('Company',['Id',@@source_app_account_id]).each { |company| dest_companies[company['Id']] = company[@@source_app_account_id].to_i } unless params[:companies][:checkbox] == 'false'
 
     dest_default_stage = Infusionsoft.data_get_app_setting('Opportunity','defaultstage')
 
@@ -650,8 +646,8 @@ class App2appController < ApplicationController
 
     #RENAME OPPORTUNITY FIELDS TO MATCH CUSTOM FIELDS
     #____________________________________________
-    source_app_opp_id = create_custom_field('Source App Opportunity ID',custom_field_header_id,'Opportunity','Text')['Name']
-    rename_mapping['Id'] = source_app_opp_id
+    @@source_app_opportunity_id = create_custom_field('Source App Opportunity ID',custom_field_header_id,'Opportunity','Text')['Name']
+    rename_mapping['Id'] = @@source_app_opportunity_id
     source_opportunities.each_with_index do |item, pos|
       source_opportunities[pos].keys.each { |k| source_opportunities[pos][ rename_mapping[k] ] = source_opportunities[pos].delete(k).to_s if rename_mapping[k] }
     end
@@ -670,42 +666,44 @@ class App2appController < ApplicationController
       end
     end
 
+    #GET CURRENT OPPS AND CREATE RELATIONSHIP
+    #________________________________________
+    dest_opportunities = {}
+    current_dest_opps = []
+    get_table("Lead",[@@source_app_opportunity_id,'Id'],{@@source_app_opportunity_id => "_%"}).each do |opp|
+      dest_opportunities[opp[@@source_app_opportunity_id].to_i] = opp['Id']
+      current_dest_opps.push(opp[@@source_app_opportunity_id])
+    end
+
     #IMPORT OPPORTUNITIES
     #____________________
     #attaches opps to contacts or companies
-    dest_opportunities = {}
     source_opportunities.each do |opp|
-      opp['ContactID'] = dest_contacts.key(opp['ContactID']).nil? ? dest_companies.key(opp['ContactID']) : dest_contacts.key(opp['ContactID'])
-      opp['ContactID'] = 0 if opp['ContactID'].nil?
-      dest_stages[opp['StageID']].nil? ? opp['StageID'] = dest_default_stage : opp['StageID'] = dest_stages[opp['StageID']]
-      users_relationship[opp['UserID']].nil? ? opp['UserID'] = 0 : opp['UserID'] = users_relationship[opp['UserID']]
-      dest_opportunities[opp[source_app_opp_id].to_i] = Infusionsoft.data_add('Lead',opp) unless opp.nil?
+      next if (current_dest_opps.include?(opp[@@source_app_opportunity_id]) || (dest_contacts.key(opp['ContactID']).nil? && dest_companies.key(opp['ContactID']).nil?))
+      opp['ContactID'] = dest_contacts.key(opp['ContactID']) || dest_companies.key(opp['ContactID'])
+      opp['StageID'] = dest_stages[opp['StageID']] || dest_default_stage
+      opp['UserID'] = users_relationship[opp['UserID']] || 0
+      dest_opportunities[opp[@@source_app_opportunity_id].to_i] = Infusionsoft.data_add('Lead',opp)
     end
 
     #IMPORT PRODUCT BUNDLES AND INTERESTS
     #______________________
     #create relationship between source and dest products
     dest_products = {}
-    get_table('Product').each do |product|
-      dest_products[source_products[product['ProductName']]] = product['Id']
-    end
+    get_table('Product').each { |product| dest_products[source_products[product['ProductName']]] = product['Id'] }
 
     dest_bundles = {}
-    get_table('ProductInterestBundle').each do |bundle|
-      dest_bundles[bundle['BundleName']] = bundle['Id']
-    end
+    get_table('ProductInterestBundle').each { |bundle| dest_bundles[bundle['BundleName']] = bundle['Id'] }
 
     bundles_relationship = {}
-    source_bundles.each do |bundle|
-      bundles_relationship[bundle['Id']] = dest_bundles[bundle['BundleName']].nil? ? Infusionsoft.data_add('ProductInterestBundle',bundle) : dest_bundles[bundle['BundleName']]
-    end
+    source_bundles.each { |bundle| bundles_relationship[bundle['Id']] = dest_bundles[bundle['BundleName']] || Infusionsoft.data_add('ProductInterestBundle',bundle) }
 
     source_interests.each do |interest|
       interest['ObjectId'] = bundles_relationship[interest['ObjectId']] if interest['ObjType'] == 'Bundle'
       interest['ObjectId'] = dest_opportunities[interest['ObjectId']] if interest['ObjType'] == 'Opportunity'
       interest['ProductId'] == 0 ? interest['SubscriptionPlanId'] = @@subscription_relationship[interest['SubscriptionPlanId']] : interest['ProductId'] = dest_products[interest['ProductId']]
       Infusionsoft.data_add('ProductInterest',interest) unless interest['ObjType'] == 'Action' || interest['ProductId'].nil?
-    end
+    end unless source_interests.empty?
 
     puts "Opportunities Imported."
   end
