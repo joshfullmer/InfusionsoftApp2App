@@ -5,6 +5,7 @@ class App2appController < ApplicationController
   @@source_app_account_id = "_SourceAppCompanyID"
   @@source_app_action_id = "_SourceAppActionID"
   @@source_app_opportunity_id = "_SourceAppOpportunityID"
+  @@source_app_order_id = "_SourceAppOrderID"
 
   @@subscription_relationship = {}
 
@@ -129,7 +130,7 @@ class App2appController < ApplicationController
     #adds lead source categories to dest app, and sets the ID of the source app lead source category equal to the category created
     #only adds lead source category if it doesn't already exist in dest app
     category_relationship = {}
-    source_app_lead_source_categories.each { |cat| 
+    source_app_lead_source_categories.each { |cat|
       category_relationship[cat['Id']] = dest_app_lead_source_categories.key(cat['Name']) || Infusionsoft.data_add('LeadSourceCategory',cat)
     }
 
@@ -472,7 +473,7 @@ class App2appController < ApplicationController
       action.except!('OpportunityId')
       action[@@source_app_action_id] = action['Id'].to_s
       action['ContactId'] = contact_ids_relationship[action['ContactId']]
-      action['UserID'] = users_relationship[action['UserID']] || 0
+      action['UserID'] = users_relationship[action['UserID']] || default_user_id
       action['ActionDescription'].prepend("[Task] ") if action['ObjectType'] == 'Task' && !action['ActionDescription'].nil?
       Infusionsoft.data_add('ContactAction',action)
     end
@@ -769,6 +770,7 @@ class App2appController < ApplicationController
 
     #get Job, Invoice, InvoiceItem, and InvoicePayment tables
     source_jobs = get_table('Job')
+    #source_jobs = get_table('Job',[],{Id: 6})
     source_invoices = get_table('Invoice')
     source_invoice_items = get_table('InvoiceItem')
     source_invoice_payments = get_table('InvoicePayment')
@@ -777,9 +779,7 @@ class App2appController < ApplicationController
     source_payment_plan_items = get_table('PayPlanItem')
 
     source_products = {}
-    get_table('Product').each do |product|
-      source_products[product['ProductName']] = product['Id']
-    end
+    get_table('Product').each { |product| source_products[product['ProductName']] = product['Id'] }
 
     #DESTINATION APP
     #-----------------------------------------------------------------------------
@@ -795,25 +795,34 @@ class App2appController < ApplicationController
 
     #get contact relationship
     contact_ids_relationship = {}
-    get_table('Contact',['Id',@@source_app_contact_id]).each do |contact|
-      contact_ids_relationship[contact[@@source_app_contact_id].to_i] = contact['Id']
-    end
+    get_table('Contact',['Id',@@source_app_contact_id]).each { |contact| contact_ids_relationship[contact[@@source_app_contact_id].to_i] = contact['Id'] }
 
     #create historical Job > Invoice relationship
     historical_job_invoice_relationship = {}
-    source_invoices.each do |invoice|
-      historical_job_invoice_relationship[invoice['JobId']] = invoice['Id']
-    end
+    source_invoices.each { |invoice| historical_job_invoice_relationship[invoice['JobId']] = invoice['Id'] }
 
     #CREATE BLANK ORDERS
     #___________________
     puts "=> Creating Blank Orders..."
 
+    #create custom field for orders
+    @@source_app_order_id = create_custom_field('Source App Order ID',0,'Job','Text')['Name']
+
+    #get orders that already exist
+    dest_orders = get_table('Job',[@@source_app_order_id],{@@source_app_order_id => '_%'}).map { |j| j[@@source_app_order_id].to_i }
+    dest_order_relationship = {}
+    get_table('Job',[@@source_app_order_id,'Id'],{@@source_app_order_id => '_%'}).each { |j| dest_order_relationship[j[@@source_app_order_id]] = j['Id']}
+
     #creates blank orders and stores relationship between the created Invoice and the historical invoice
     invoice_relationship = {}
     source_jobs.each do |job|
+      if dest_orders.include? job['Id']
+        invoice_relationship[historical_job_invoice_relationship[job['Id']].to_i] = dest_order_relationship[job['Id']]
+        next
+      end
       next unless (contact_ids_relationship[job['ContactId']]) || ((job['JobRecurringId'] == 0) && subscriptioncheck) #skips orders attached to users and subscription orders
       invoice_relationship[historical_job_invoice_relationship[job['Id']].to_i] = Infusionsoft.invoice_create_blank_order(contact_ids_relationship[job['ContactId']],job['JobTitle'],job['DueDate'],0,0)
+      Infusionsoft.data_update('Job',invoice_relationship[historical_job_invoice_relationship[job['Id']].to_i],{@@source_app_order_id => job['Id'].to_s})
     end
 
     #CREATE ORDER ITEMS
@@ -839,7 +848,7 @@ class App2appController < ApplicationController
       #invoice ID
       invoice_id = invoice_relationship[item['InvoiceId']]
       next if invoice_id.nil? #skips invoices that weren't created, because they didn't have a contact to attach to, or if they were subscription orders
-      
+
       #product ID
       historical_invoice_product_relationship[item['InvoiceId']].nil? ? product_id = 0 : product_id = dest_products[historical_invoice_product_relationship[item['InvoiceId']].shift]
       product_id.nil? ? product_type = 0 : product_type = 4
@@ -851,8 +860,8 @@ class App2appController < ApplicationController
 
       #quantity
       match = /\(Qty (\d+)\)/.match(item['Description'])
-      match.nil? ? quantity = 1 : quantity = match.captures[0].to_i
-      
+      match.nil? ? quantity = 1 : quantity = match.captures.first.to_i
+
       #price
       price = item['InvoiceAmt'].to_f / quantity
 
@@ -869,9 +878,7 @@ class App2appController < ApplicationController
 
     #creates relationship between InvoicePaymentID and PaymentID
     invoice_payment_relationship = {}
-    source_invoice_payments.each do |payment|
-      invoice_payment_relationship[payment['PaymentId']] = payment['Id']
-    end
+    source_invoice_payments.each { |payment| invoice_payment_relationship[payment['PaymentId']] = payment['Id'] }
 
     #create relationships for invoice_payment and payment tables, to match PayType and PayNote
     types = {}
@@ -893,11 +900,10 @@ class App2appController < ApplicationController
       date = payment['PayDate']
 
       #type
-      type = types[payment['Id']]
+      type = types[payment['Id']] || ''
 
       #description
-      description = notes[payment['Id']]
-      description = '' if description.nil?
+      description = notes[payment['Id']] || ''
 
       #create manual payments
       Infusionsoft.invoice_add_manual_payment(invoice_id,amount,date,type,description,false)
@@ -936,8 +942,7 @@ class App2appController < ApplicationController
       initial_payment_amount = plan['FirstPayAmt']
 
       #initial payment date
-      initial_payment_date = plan['InitDate']
-      initial_payment_date = plan['StartDate'] if initial_payment_date.nil?
+      initial_payment_date = plan['InitDate'] || plan['StartDate']
 
       #plan start date
       plan_start_date = plan['StartDate']
